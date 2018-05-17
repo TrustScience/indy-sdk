@@ -8,6 +8,6 @@ namespace Hyperledger.Indy
     /// </summary>
     internal static class Consts
     {
-        public const string NATIVE_LIB_NAME = "indy";
+        public const string NATIVE_LIB_NAME = @"C:\app\libindy_1.3.0_stable\lib\indy.dll";
     }
 }
