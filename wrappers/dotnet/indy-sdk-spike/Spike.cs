@@ -25,44 +25,49 @@ namespace indy_sdk_spike
         public async Task RuntrusteeCollegeDemo()
         {
             // Step 2: Connecting to the Indy Nodes Pool
-
-            Console.WriteLine("Step 2: Connecting to the Indy Nodes Pool");
+            Console.WriteLine("Connecting to the Indy Nodes Pool");
             pool = await CreatePool(poolName);
 
             // Step 3: Getting the ownership for Stewards's Verinym
-            Console.WriteLine("Step 3: Getting the ownership for Stewards's Verinym");
-            DidEntity stewardDidEntity = await RestoreSteward();
+            Console.WriteLine("Getting the ownership for Stewards's Verinym");
+            var stewardEntity = await RestoreStewardFromAlreadyKnownSeed();
 
             // Step 4: Onboarding trustee, Acme, Thrift and Government by Steward
-            Console.WriteLine("Step 4: Onboarding trustee, Acme, Thrift and Government by Steward");
-            var faberInfo = await OnboardTrustee($"FaberColledge{Guid.NewGuid()}", stewardDidEntity);
-            var acmeInfo = await OnboardTrustee($"AcmeCorp{Guid.NewGuid()}", stewardDidEntity);
-            var thriftInfo = await OnboardTrustee($"ThriftBank{Guid.NewGuid()}", stewardDidEntity);
-            var govInfo = await OnboardTrustee($"Government{Guid.NewGuid()}", stewardDidEntity);
+            Console.WriteLine("Onboarding trustee, Acme, Thrift and Government by Steward");
+            var faberOnboardingDetail = await OnboardTrustee($"FaberColledge{Guid.NewGuid()}", stewardEntity);
+            var acmeOnboardingDetail = await OnboardTrustee($"AcmeCorp{Guid.NewGuid()}", stewardEntity);
+            var thriftOnboardingDetail = await OnboardTrustee($"ThriftBank{Guid.NewGuid()}", stewardEntity);
+            var govOnboardingDetail = await OnboardTrustee($"Government{Guid.NewGuid()}", stewardEntity);
+
+            var faberEntity = faberOnboardingDetail.DidEntity;
+            var acmeEntity = acmeOnboardingDetail.DidEntity;
+            var thriftEntity = thriftOnboardingDetail.DidEntity;
+            var govEntity = govOnboardingDetail.DidEntity;
 
             // Step 5: Credential Schema Setup
-            Console.WriteLine("Step 5: Credential Schema Setup");
+            Console.WriteLine("Credential Schema Setup");
             // trustee (government) create and publish credential schema
-
-            var transcriptSchemaId = await CreateSchema(govInfo.DidEntity.Wallet, govInfo.DidEntity.DidInfo.Did,
+            var transcriptSchemaId = await CreateSchema(govEntity.Wallet, govEntity.DidInfo.Did,
                 "Transcript",
                 "1.2",
                 "[\"first_name\", \"last_name\", \"degree\", \"status\", \"year\", \"average\", \"ssn\"]"
                 );
 
-            var jobCertSchemaId = await CreateSchema(govInfo.DidEntity.Wallet, govInfo.DidEntity.DidInfo.Did,
+            var jobCertSchemaId = await CreateSchema(govEntity.Wallet, govEntity.DidInfo.Did,
                 "Job-Certificate",
                 "0.1",
                 "[\"first_name\", \"last_name\", \"salary\", \"employee_status\", \"experience\"]"
                 );
 
             // Step 6: Credential Definition Setup
+            Console.WriteLine("Credential Definition Setup");
             // faber fetches transcript schema from ledger and publishes a schema def
-            await RetrieveSchemaAndPublishDef(faberInfo.DidEntity, govInfo.DidEntity, transcriptSchemaId);
-            await RetrieveSchemaAndPublishDef(acmeInfo.DidEntity, govInfo.DidEntity, jobCertSchemaId);
+            await RetrieveSchemaAndPublishDef(faberEntity, govEntity, transcriptSchemaId);
 
             // acme fetches job cert schema from ledger and publish a schema def
+            await RetrieveSchemaAndPublishDef(acmeEntity, govEntity, jobCertSchemaId);
 
+            // alice gets a transcript
         }
 
         private async Task<string> RetrieveSchemaAndPublishDef(DidEntity publisher, DidEntity originalIssuer, string transcriptSchemaId)
@@ -199,8 +204,6 @@ namespace indy_sdk_spike
             var trusteeDidNymRequest = await Ledger.BuildNymRequestAsync(stewardDidEntity.DidInfo.Did, decryptedtrusteeDidInfo.Did, decryptedtrusteeDidInfo.VerKey, null, "TRUST_ANCHOR");
             await Ledger.SignAndSubmitRequestAsync(pool, stewardDidEntity.Wallet, stewardDidEntity.DidInfo.Did, trusteeDidNymRequest);
 
-            
-
             // At this point, trustee has a DID related to his identity in the Ledger.
 
             var onboardingDetail = new OnboardingDetail
@@ -218,7 +221,6 @@ namespace indy_sdk_spike
         }
 
 
-
         private async Task<Pool> CreatePool(string poolName)
         {
             FileStream genesisTxnFile = PoolUtils.CreateGenesisTxnFile("genesis.txn");
@@ -231,7 +233,7 @@ namespace indy_sdk_spike
             return await Pool.OpenPoolLedgerAsync(poolName, openPoolConfigurationJSON);
         }
 
-        private async Task<DidEntity> RestoreSteward()
+        private async Task<DidEntity> RestoreStewardFromAlreadyKnownSeed()
         {
             string stewardWalletName = "sovrin_steward_wallet"+ Guid.NewGuid().ToString();
             await Wallet.CreateWalletAsync(poolName, stewardWalletName, null, null, null);
