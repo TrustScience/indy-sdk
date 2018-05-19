@@ -13,4 +13,13 @@
     <ProjectReference Include="..\indy-sdk-dotnet\indy-sdk-dotnet.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Update="AcmeProofRequest.txt">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="job_application_requested_creds_json.txt">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
 </Project>

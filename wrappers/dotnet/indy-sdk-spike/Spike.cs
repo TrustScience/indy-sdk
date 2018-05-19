@@ -34,10 +34,10 @@ namespace indy_sdk_spike
 
             // Step 4: Onboarding trustee, Acme, Thrift and Government by Steward
             Console.WriteLine("Onboarding trustee, Acme, Thrift and Government by Steward");
-            var faberOnboardingDetail = await OnboardTrustee($"FaberColledge{Guid.NewGuid()}", stewardEntity);
-            var acmeOnboardingDetail = await OnboardTrustee($"AcmeCorp{Guid.NewGuid()}", stewardEntity);
-            var thriftOnboardingDetail = await OnboardTrustee($"ThriftBank{Guid.NewGuid()}", stewardEntity);
-            var govOnboardingDetail = await OnboardTrustee($"Government{Guid.NewGuid()}", stewardEntity);
+            var faberOnboardingDetail = await OnboardNewEntity($"FaberColledge{Guid.NewGuid()}", stewardEntity);
+            var acmeOnboardingDetail = await OnboardNewEntity($"AcmeCorp{Guid.NewGuid()}", stewardEntity);
+            var thriftOnboardingDetail = await OnboardNewEntity($"ThriftBank{Guid.NewGuid()}", stewardEntity);
+            var govOnboardingDetail = await OnboardNewEntity($"Government{Guid.NewGuid()}", stewardEntity);
 
             var faberEntity = faberOnboardingDetail.DidEntity;
             var acmeEntity = acmeOnboardingDetail.DidEntity;
@@ -62,12 +62,159 @@ namespace indy_sdk_spike
             // Step 6: Credential Definition Setup
             Console.WriteLine("Credential Definition Setup");
             // faber fetches transcript schema from ledger and publishes a schema def
-            await RetrieveSchemaAndPublishDef(faberEntity, govEntity, transcriptSchemaId);
+            var faberTransacriptCredDefId = await RetrieveSchemaAndPublishDef(faberEntity, govEntity, transcriptSchemaId);
 
             // acme fetches job cert schema from ledger and publish a schema def
-            await RetrieveSchemaAndPublishDef(acmeEntity, govEntity, jobCertSchemaId);
+            var acmeJobCertCredDefId = await RetrieveSchemaAndPublishDef(acmeEntity, govEntity, jobCertSchemaId);
 
             // alice gets a transcript
+
+            // faber agent
+            var transcriptCredOfferJson = await AnonCreds.IssuerCreateCredentialOfferAsync(faberEntity.Wallet, faberTransacriptCredDefId);
+
+            // alice agent
+            // TODO: NYM txn might be not needed for alice's did
+            var aliceOnboardingDetail = await OnboardNewEntity($"alice{Guid.NewGuid()}", faberEntity);
+            var aliceEntity = aliceOnboardingDetail.DidEntity;
+
+            var aliceMasterSecretId = await AnonCreds.ProverCreateMasterSecretAsync(aliceEntity.Wallet, null);
+
+            // alice get faber's schema
+            var getSchemaRequest = await Ledger.BuildGetSchemaRequestAsync(aliceOnboardingDetail.TrusteeStewardDidInfo.Did, transcriptSchemaId);
+            var getSchemaResponse = await Ledger.SubmitRequestAsync(pool, getSchemaRequest);
+            var schemaResult = getSchemaResponse.Serialize<LedgerResult<CredentialSchemaResult>>();
+            var transcriptSchema = await Ledger.ParseGetSchemaResponseAsync(getSchemaResponse);
+
+            // alice get faber's def
+            var getCredDefRequest = await Ledger.BuildGetCredDefRequestAsync(aliceOnboardingDetail.TrusteeStewardDidInfo.Did, faberTransacriptCredDefId);
+            var getCredDefResponse = await Ledger.SubmitRequestAsync(pool, getCredDefRequest);
+            var defResult = getCredDefResponse.Serialize<LedgerResult<ClaimDefinitionResult>>();
+            var faberTranscriptCredDef = await Ledger.ParseGetCredDefResponseAsync(getCredDefResponse);
+
+            // alice create a transcript request for faber
+            var transcriptRequest = await AnonCreds.ProverCreateCredentialReqAsync(aliceEntity.Wallet,
+                aliceOnboardingDetail.TrusteeStewardDidInfo.Did, transcriptCredOfferJson, faberTranscriptCredDef.ObjectJson, aliceMasterSecretId);
+
+            // pretend alice agent sends the transcript request to faber
+
+            // faber agent
+
+            // faber now issues the claim for the request
+            var transcriptCredValues = string.Empty;
+            transcriptCredValues += "{";
+            transcriptCredValues += "\"first_name\": {\"raw\": \"Alice\", \"encoded\": \"1139481716457488690172217916278103335\"},";
+            transcriptCredValues += "\"last_name\": {\"raw\": \"Garcia\", \"encoded\": \"5321642780241790123587902456789123452\"},";
+            transcriptCredValues += "\"degree\": {\"raw\": \"Bachelor of Science, Marketing\", \"encoded\": \"12434523576212321\"},";
+            transcriptCredValues += "\"status\": {\"raw\": \"graduated\", \"encoded\": \"2213454313412354\"},";
+            transcriptCredValues += "\"ssn\": {\"raw\": \"123-45-6789\", \"encoded\": \"3124141231422543541\"},";
+            transcriptCredValues += "\"year\": {\"raw\": \"2015\", \"encoded\": \"2015\"},";
+            transcriptCredValues += "\"average\": {\"raw\": \"5\", \"encoded\": \"5\"}";
+            transcriptCredValues += "}";
+
+            var createTranscriptCredResult = await AnonCreds.IssuerCreateCredentialAsync(faberEntity.Wallet,
+                transcriptCredOfferJson, transcriptRequest.CredentialRequestJson, transcriptCredValues, null, null);
+
+            // alice agent
+
+            // alice store the credential in her wallet
+            await AnonCreds.ProverStoreCredentialAsync(aliceEntity.Wallet,
+                null,
+                transcriptRequest.CredentialRequestMetadataJson,
+                createTranscriptCredResult.CredentialJson,
+                faberTranscriptCredDef.ObjectJson,
+                null);
+
+
+            // alice now prepare the proof for acme
+            var jobApplicationProofRequestJson = GenerateAcmeProofRequest(faberTranscriptCredDef.Id);
+            var claimForProofJson = await AnonCreds.ProverGetCredentialsForProofReqAsync(aliceEntity.Wallet, jobApplicationProofRequestJson);
+            var claimForProof = claimForProofJson.Serialize<ClaimsForProofResponse>();
+            var jobApplicationRequestedCredsJson = new
+            {
+                self_attested_attributes = new
+                {
+                    attr1_referent = "Alice",
+                    attr2_referent = "Garcia",
+                    attr6_referent = "123-45-6789"
+                },
+                requested_attributes = new
+                {
+                    attr3_referent = new { cred_id = claimForProof.Attrs["attr3_referent"].First().CredInfo.ClaimUUID, revealed = true },
+                    attr4_referent = new { cred_id = claimForProof.Attrs["attr4_referent"].First().CredInfo.ClaimUUID, revealed = true },
+                    attr5_referent = new { cred_id = claimForProof.Attrs["attr5_referent"].First().CredInfo.ClaimUUID, revealed = true }
+                },
+                requested_predicates = new
+                {
+                    predicate1_referent = new { cred_id = claimForProof.Predicates["predicate1_referent"].First().CredInfo.ClaimUUID }
+                }
+            }.ToJson();
+
+            string requestedCred = System.IO.File.ReadAllText(@".\job_application_requested_creds_json.txt");
+            requestedCred = requestedCred.Replace("cred_for_attr3", claimForProof.Attrs["attr3_referent"].First().CredInfo.ClaimUUID);
+            requestedCred = requestedCred.Replace("cred_for_attr4", claimForProof.Attrs["attr4_referent"].First().CredInfo.ClaimUUID);
+            requestedCred = requestedCred.Replace("cred_for_attr5", claimForProof.Attrs["attr5_referent"].First().CredInfo.ClaimUUID);
+            requestedCred = requestedCred.Replace("cred_for_predicate1", claimForProof.Predicates["predicate1_referent"].First().CredInfo.ClaimUUID);
+
+
+            var applyJobProofJson = await AnonCreds.ProverCreateProofAsync(
+                aliceEntity.Wallet,
+                jobApplicationProofRequestJson, // TODO: perhaps change to decrypted version. DO IT
+                requestedCred,
+                aliceMasterSecretId,
+                transcriptSchema.ObjectJson,
+                faberTranscriptCredDef.ObjectJson, 
+                "{}");
+        }
+
+        private static string GenerateAcmeProofRequest(string faberTranscriptCredDefId)
+        {
+            var proofRequest = new
+            {
+                nonce = "1432422343242122312411212",
+                name = "Job-Application",
+                version = "0.1",
+                requested_attributes = new
+                {
+                    attr1_referent = new
+                    {
+                        name = "first_name"
+                    },
+                    attr2_referent = new
+                    {
+                        name = "last_name"
+                    },
+                    attr3_referent = new
+                    {
+                        name = "degree",
+                        restrictions = new[] { new { cred_def_id = faberTranscriptCredDefId } }
+                    },
+                    attr4_referent = new
+                    {
+                        name = "status",
+                        restrictions = new[] { new { cred_def_id = faberTranscriptCredDefId } }
+                    },
+                    attr5_referent = new
+                    {
+                        name = "ssn",
+                        restrictions = new[] { new { cred_def_id = faberTranscriptCredDefId } }
+                    },
+                    attr6_referent = new
+                    {
+                        name = "phone_number"
+                    }
+                },
+                requested_predicates = new
+                {
+                    predicate1_referent = new
+                    {
+                        name = "average",
+                        p_type = ">=",
+                        p_value = 4,
+                        restrictions = new[] { new { cred_def_id = faberTranscriptCredDefId } }
+                    }
+                }
+            };
+            return proofRequest.ToJson();
         }
 
         private async Task<string> RetrieveSchemaAndPublishDef(DidEntity publisher, DidEntity originalIssuer, string transcriptSchemaId)
@@ -83,7 +230,7 @@ namespace indy_sdk_spike
                 "{\"support_revocation\": false}");
             var createCredDefRequest = await Ledger.BuildCredDefRequestAsync(publisher.DidInfo.Did, claimDef.CredDefJson);
             var createCredDefResponse = await Ledger.SignAndSubmitRequestAsync(pool, publisher.Wallet, publisher.DidInfo.Did, createCredDefRequest);
-            return createCredDefResponse;
+            return claimDef.CredDefId;
         }
 
         private async Task<string> CreateSchema(Wallet issuerWallet, string issuerDid, string name, string version, string attrs)
@@ -93,8 +240,8 @@ namespace indy_sdk_spike
             var throwAway = await Ledger.SignAndSubmitRequestAsync(pool, issuerWallet, issuerDid, schemaRequest);
             return schema.SchemaId;
         }
-
-        private async Task<OnboardingDetail> OnboardTrustee(string trustee, DidEntity stewardDidEntity)
+        
+        private async Task<OnboardingDetail> OnboardNewEntity(string trustee, DidEntity stewardDidEntity)
         {
             // a. Connecting the Establishment. 
 
@@ -102,6 +249,7 @@ namespace indy_sdk_spike
 
             // ## steward side
             // create pair wise identifier for steward to trustee
+           
             var stewardtrusteeDidResult = await Did.CreateAndStoreMyDidAsync(stewardDidEntity.Wallet, "{}");
             var stewardtrusteeDid = new DidInfo()
             {
@@ -112,7 +260,7 @@ namespace indy_sdk_spike
             var nymRequest = await Ledger.BuildNymRequestAsync(stewardDidEntity.DidInfo.Did, stewardtrusteeDid.Did, stewardtrusteeDid.VerKey, null, null);
             await Ledger.SignAndSubmitRequestAsync(pool, stewardDidEntity.Wallet, stewardDidEntity.DidInfo.Did, nymRequest);
 
-            // create connection request for trustee college
+            // create connection request for trustee
             var connectionRequest = new ConnectionRequest()
             {
                 Did = stewardtrusteeDid.Did,
@@ -276,7 +424,7 @@ namespace indy_sdk_spike
         static JsonSerializerSettings _jsonSerializerSettings = new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore };
         public static string ToJson(this object model)
         {
-            return JsonConvert.SerializeObject(model, Formatting.Indented, _jsonSerializerSettings);
+            return JsonConvert.SerializeObject(model, Formatting.None, _jsonSerializerSettings);
         }
         public static T Serialize<T>(this byte[] bytes)
         {

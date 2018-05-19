@@ -215,6 +215,23 @@ namespace Hyperledger.Indy
             /// <summary>
             /// TODO
             /// </summary>
+            [JsonProperty("cred_info", NullValueHandling = NullValueHandling.Ignore)]
+            public ReferentDetail CredInfo { get; set; }
+            /// <summary>
+            /// TODO
+            /// </summary>
+            [JsonProperty("interval", NullValueHandling = NullValueHandling.Ignore)]
+            public string interval { get; set; }
+        }
+
+        /// <summary>
+        /// TODO
+        /// </summary>
+        public partial class ReferentDetail
+        {
+            /// <summary>
+            /// TODO
+            /// </summary>
             [JsonProperty("referent", NullValueHandling = NullValueHandling.Ignore)]
             public string ClaimUUID { get; set; }
             /// <summary>
@@ -225,18 +242,18 @@ namespace Hyperledger.Indy
             /// <summary>
             /// TODO
             /// </summary>
-            [JsonProperty("schema_key", NullValueHandling = NullValueHandling.Ignore)]
-            public SchemaKey SchemaKey { get; set; }
+            [JsonProperty("schema_id", NullValueHandling = NullValueHandling.Ignore)]
+            public string SchemaKey { get; set; }
             /// <summary>
             /// TODO
             /// </summary>
-            [JsonProperty("issuer_did", NullValueHandling = NullValueHandling.Ignore)]
-            public string IssuerDid { get; set; }
+            [JsonProperty("rev_reg_id", NullValueHandling = NullValueHandling.Ignore)]
+            public string RevRegId { get; set; }
             /// <summary>
             /// TODO
             /// </summary>
-            [JsonProperty("revoc_reg_seq_no")]
-            public object RevocRegSeqNo { get; set; }
+            [JsonProperty("cred_rev_id", NullValueHandling = NullValueHandling.Ignore)]
+            public string CredRevId { get; set; }
         }
 
         /// <summary>
