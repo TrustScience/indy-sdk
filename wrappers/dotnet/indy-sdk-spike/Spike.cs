@@ -125,9 +125,22 @@ namespace indy_sdk_spike
                 null);
 
 
-            // alice now prepare the proof for acme
+
+            // acme agent
+
             var jobApplicationProofRequestJson = GenerateAcmeProofRequest(faberTranscriptCredDef.Id);
-            var claimForProofJson = await AnonCreds.ProverGetCredentialsForProofReqAsync(aliceEntity.Wallet, jobApplicationProofRequestJson);
+
+            var aliceAcmeOnboarding = await OnboardNewEntity(aliceEntity.Wallet, acmeEntity, false);
+
+            var authCryptedJObApplicationProofRequestJson = await Crypto.AuthCryptAsync(acmeEntity.Wallet,
+                aliceAcmeOnboarding.StewardTrusteeDidInfo.VerKey, aliceAcmeOnboarding.TrusteeStewardDidInfo.VerKey, jobApplicationProofRequestJson.ToBytes());
+
+            // alice agent
+            var decryptedResultJobApplicationProofRequestJson = await AuthDecrypt(aliceEntity.Wallet, aliceAcmeOnboarding.TrusteeStewardDidInfo.VerKey, authCryptedJObApplicationProofRequestJson);
+            
+
+            // alice now prepare the proof for acme
+            var claimForProofJson = await AnonCreds.ProverGetCredentialsForProofReqAsync(aliceEntity.Wallet, decryptedResultJobApplicationProofRequestJson);
             var claimForProof = claimForProofJson.Serialize<ClaimsForProofResponse>();
             var jobApplicationRequestedCredsJson = new
             {
@@ -156,15 +169,44 @@ namespace indy_sdk_spike
             requestedCred = requestedCred.Replace("cred_for_predicate1", claimForProof.Predicates["predicate1_referent"].First().CredInfo.ClaimUUID);
 
 
+            var faberTranscriptCredDefJson = "{\"" + faberTranscriptCredDef.Id + "\":" + faberTranscriptCredDef.ObjectJson + "}";
+            var transcriptSchemaJson = "{\"" + transcriptSchema.Id + "\":" + transcriptSchema.ObjectJson + "}";
+
             var applyJobProofJson = await AnonCreds.ProverCreateProofAsync(
                 aliceEntity.Wallet,
-                jobApplicationProofRequestJson, // TODO: perhaps change to decrypted version. DO IT
+                decryptedResultJobApplicationProofRequestJson, // TODO: perhaps change to decrypted version. DO IT
                 requestedCred,
                 aliceMasterSecretId,
-                transcriptSchema.ObjectJson,
-                faberTranscriptCredDef.ObjectJson, 
+                transcriptSchemaJson,
+                faberTranscriptCredDefJson,
                 "{}");
+
+            var verified= await AnonCreds.VerifierVerifyProofAsync(decryptedResultJobApplicationProofRequestJson, applyJobProofJson, transcriptSchemaJson, faberTranscriptCredDefJson, "{}", "{}");
         }
+
+
+        private static async Task<string> AuthDecrypt(Wallet myWallet, string myVk, byte[] message)
+        {
+            var decrypt = await Crypto.AuthDecryptAsync(myWallet, myVk, message);
+            var obj = decrypt.MessageData.ToStringValue();
+            return obj;
+        }
+
+        private static async Task<(string,string)> Onboarding(Pool pool, Wallet fromWallet, string fromDid, Wallet toWallet)
+        {
+            var didInfo =  await Did.CreateAndStoreMyDidAsync(fromWallet, "{}");
+            await SendNym(pool, fromWallet, fromDid, didInfo.Did, didInfo.VerKey, null);
+            string nonce = "123456789";
+            return (didInfo.Did, nonce);
+        }
+
+
+        private static async Task SendNym(Pool pool, Wallet submitterWallet, string submitterDid, string newDid, string newKey, string role)
+        {
+            var nymRequest = await Ledger.BuildNymRequestAsync(submitterDid, newDid, newKey, null, role);
+            await Ledger.SignAndSubmitRequestAsync(pool, submitterWallet, submitterDid, nymRequest);
+        }
+                    
 
         private static string GenerateAcmeProofRequest(string faberTranscriptCredDefId)
         {
@@ -240,8 +282,17 @@ namespace indy_sdk_spike
             var throwAway = await Ledger.SignAndSubmitRequestAsync(pool, issuerWallet, issuerDid, schemaRequest);
             return schema.SchemaId;
         }
-        
-        private async Task<OnboardingDetail> OnboardNewEntity(string trustee, DidEntity stewardDidEntity)
+
+
+        private async Task<OnboardingDetail> OnboardNewEntity(string trustee, DidEntity stewardDidEntity, bool createTrusteeDid = true)
+        {
+            await Wallet.CreateWalletAsync(poolName, $"{trustee}_wallet", null, null, null);
+            var trusteeWallet = await Wallet.OpenWalletAsync($"{trustee}_wallet", null, null);
+            return await OnboardNewEntity(trusteeWallet, stewardDidEntity, createTrusteeDid);
+        }
+
+
+        private async Task<OnboardingDetail> OnboardNewEntity(Wallet trusteeWallet, DidEntity stewardDidEntity, bool createTrusteeDid = true)
         {
             // a. Connecting the Establishment. 
 
@@ -271,8 +322,7 @@ namespace indy_sdk_spike
 
             // ## trustee side
             // trustee create pair wise identifier 
-            await Wallet.CreateWalletAsync(poolName, $"{trustee}_wallet", null, null, null);
-            var trusteeWallet = await Wallet.OpenWalletAsync($"{trustee}_wallet", null, null);
+
             var trusteeStewardDidResult = await Did.CreateAndStoreMyDidAsync(trusteeWallet, "{}");
             var trusteeStewardDidInfo = new DidInfo()
             {
@@ -311,49 +361,50 @@ namespace indy_sdk_spike
             // b. trustee getting Verinym. Steward creating trustee's did on trustee's behalf
 
             // trustee side
-            var trusteeDid = await Did.CreateAndStoreMyDidAsync(trusteeWallet, "{}");
 
-            var trusteeDidInfo = new DidInfo()
+            var trusteeDidInfo = new DidInfo();
+
+            if (createTrusteeDid)
             {
-                Did = trusteeDid.Did,
-                VerKey = trusteeDid.VerKey
-            };
+                var trusteeDid = await Did.CreateAndStoreMyDidAsync(trusteeWallet, "{}");
+                trusteeDidInfo.Did = trusteeDid.Did;
+                trusteeDidInfo.VerKey = trusteeDid.VerKey;
 
-            var createDidRequestMessage = new Message()
-            {
-                SenderDidInfo = trusteeStewardDidInfo,
-                Payload = trusteeDidInfo.ToJson()
-            };
+                var createDidRequestMessage = new Message()
+                {
+                    SenderDidInfo = trusteeStewardDidInfo,
+                    Payload = trusteeDidInfo.ToJson()
+                };
 
-            // trustee authenticates and encrypts the message by calling crypto.auth_crypt using verkeys created for secure communication with Steward.
-            // The Authenticated-encryption schema is designed for the sending of a confidential message specifically for a Recipient, using the 
-            // Sender's public key. Using the Recipient's public key, the Sender can compute a shared secret key. Using the Sender's public key and
-            // his secret key, the Recipient can compute the exact same shared secret key. That shared secret key can be used to verify that the encrypted 
-            // message was not tampered with, before eventually decrypting it.
-            var authCryptedTrusteeDidInfoJson = await Crypto.AuthCryptAsync(trusteeWallet, trusteeStewardDidInfo.VerKey, stewardtrusteeDid.VerKey, createDidRequestMessage.ToJsonThenBytes());
+                // trustee authenticates and encrypts the message by calling crypto.auth_crypt using verkeys created for secure communication with Steward.
+                // The Authenticated-encryption schema is designed for the sending of a confidential message specifically for a Recipient, using the 
+                // Sender's public key. Using the Recipient's public key, the Sender can compute a shared secret key. Using the Sender's public key and
+                // his secret key, the Recipient can compute the exact same shared secret key. That shared secret key can be used to verify that the encrypted 
+                // message was not tampered with, before eventually decrypting it.
+                var authCryptedTrusteeDidInfoJson = await Crypto.AuthCryptAsync(trusteeWallet, trusteeStewardDidInfo.VerKey, stewardtrusteeDid.VerKey, createDidRequestMessage.ToJsonThenBytes());
 
-            // pretend trustee sent the message to stewardc
+                // pretend trustee sent the message to stewardc
 
-            // steward side
+                // steward side
 
-            // decrypt the message with private key
-            var decryptedResult = await Crypto.AuthDecryptAsync(stewardDidEntity.Wallet, stewardTrusteeVerKey, authCryptedTrusteeDidInfoJson);
-            var decryptedMessage = decryptedResult.MessageData.Serialize<Message>();
+                // decrypt the message with private key
+                var decryptedResult = await Crypto.AuthDecryptAsync(stewardDidEntity.Wallet, stewardTrusteeVerKey, authCryptedTrusteeDidInfoJson);
+                var decryptedMessage = decryptedResult.MessageData.Serialize<Message>();
 
 
-            // authenticate by looking up trusteeStewardVerKey on ledger and compare with the one in message
-            var trusteeStewardVerKey = await Did.KeyForDidAsync(pool, stewardDidEntity.Wallet, decryptedMessage.SenderDidInfo.Did);
-            if (decryptedResult.TheirVk != trusteeStewardVerKey)
-            {
-                throw new Exception("Nonce not matched");
+                // authenticate by looking up trusteeStewardVerKey on ledger and compare with the one in message
+                var trusteeStewardVerKey = await Did.KeyForDidAsync(pool, stewardDidEntity.Wallet, decryptedMessage.SenderDidInfo.Did);
+                if (decryptedResult.TheirVk != trusteeStewardVerKey)
+                {
+                    throw new Exception("Nonce not matched");
+                }
+
+                var decryptedtrusteeDidInfo = JsonConvert.DeserializeObject<DidInfo>(decryptedMessage.Payload);
+                var trusteeDidNymRequest = await Ledger.BuildNymRequestAsync(stewardDidEntity.DidInfo.Did, decryptedtrusteeDidInfo.Did, decryptedtrusteeDidInfo.VerKey, null, "TRUST_ANCHOR");
+                await Ledger.SignAndSubmitRequestAsync(pool, stewardDidEntity.Wallet, stewardDidEntity.DidInfo.Did, trusteeDidNymRequest);
+
+                // At this point, trustee has a DID related to his identity in the Ledger.
             }
-
-            var decryptedtrusteeDidInfo = JsonConvert.DeserializeObject<DidInfo>(decryptedMessage.Payload);
-            var trusteeDidNymRequest = await Ledger.BuildNymRequestAsync(stewardDidEntity.DidInfo.Did, decryptedtrusteeDidInfo.Did, decryptedtrusteeDidInfo.VerKey, null, "TRUST_ANCHOR");
-            await Ledger.SignAndSubmitRequestAsync(pool, stewardDidEntity.Wallet, stewardDidEntity.DidInfo.Did, trusteeDidNymRequest);
-
-            // At this point, trustee has a DID related to his identity in the Ledger.
-
             var onboardingDetail = new OnboardingDetail
             {
                 StewardTrusteeDidInfo = stewardtrusteeDid,
@@ -441,6 +492,12 @@ namespace indy_sdk_spike
         {
             var json = model.ToJson();
             byte[] bytes = Encoding.UTF8.GetBytes(json);
+            return bytes;
+        }
+
+        public static byte[] ToBytes(this string str)
+        {
+            byte[] bytes = Encoding.UTF8.GetBytes(str);
             return bytes;
         }
 
