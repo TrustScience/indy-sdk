@@ -738,5 +738,58 @@ namespace Hyperledger.Indy
             [JsonProperty("pool_state_root_hash", NullValueHandling = NullValueHandling.Ignore)]
             public string PoolStateRootHash { get; set; }
         }
+
+        /// <summary>
+        /// TODO
+        /// </summary>
+        public class WalletMetadata
+        {
+            /// <summary>
+            /// TODO
+            /// </summary>
+            [JsonProperty("name", NullValueHandling = NullValueHandling.Ignore)]
+            public string Name { get; set; }
+            /// <summary>
+            /// TODO
+            /// </summary>
+            [JsonProperty("type", NullValueHandling = NullValueHandling.Ignore)]
+            public string Type { get; set; }
+            /// <summary>
+            /// TODO
+            /// </summary>
+            [JsonProperty("associated_pool_name", NullValueHandling = NullValueHandling.Ignore)]
+            public string AssociatedPoolName { get; set; }
+        }
+
+        /// <summary>
+        /// TODO
+        /// </summary>
+        public class DidMetadata
+        {
+            /// <summary>
+            /// TODO
+            /// </summary>
+            [JsonProperty("type", NullValueHandling = NullValueHandling.Ignore)]
+            public string Type { get; set; }
+
+            /// <summary>
+            /// TODO
+            /// </summary>
+            public enum DidType
+            {
+                /// <summary>
+                /// TODO
+                /// </summary>
+                Main,
+                /// <summary>
+                /// TODO
+                /// </summary>
+                Pairwise
+            }
+
+        }
+
+
+
     }
 }

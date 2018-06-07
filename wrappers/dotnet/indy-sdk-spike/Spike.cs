@@ -73,19 +73,17 @@ namespace indy_sdk_spike
             var transcriptCredOfferJson = await AnonCreds.IssuerCreateCredentialOfferAsync(faberEntity.Wallet, faberTransacriptCredDefId);
 
             // alice agent
-            // TODO: NYM txn might be not needed for alice's did
-            var aliceOnboardingDetail = await OnboardNewEntity($"alice{Guid.NewGuid()}", faberEntity);
+            var aliceOnboardingDetail = await OnboardNewEntity($"alice{Guid.NewGuid()}", faberEntity, false);
             var aliceEntity = aliceOnboardingDetail.DidEntity;
-
             var aliceMasterSecretId = await AnonCreds.ProverCreateMasterSecretAsync(aliceEntity.Wallet, null);
 
-            // alice get faber's schema
+            // alice get transcript schema created by government
             var getSchemaRequest = await Ledger.BuildGetSchemaRequestAsync(aliceOnboardingDetail.TrusteeStewardDidInfo.Did, transcriptSchemaId);
             var getSchemaResponse = await Ledger.SubmitRequestAsync(pool, getSchemaRequest);
             var schemaResult = getSchemaResponse.Serialize<LedgerResult<CredentialSchemaResult>>();
             var transcriptSchema = await Ledger.ParseGetSchemaResponseAsync(getSchemaResponse);
 
-            // alice get faber's def
+            // alice get transcript def created by faber
             var getCredDefRequest = await Ledger.BuildGetCredDefRequestAsync(aliceOnboardingDetail.TrusteeStewardDidInfo.Did, faberTransacriptCredDefId);
             var getCredDefResponse = await Ledger.SubmitRequestAsync(pool, getCredDefRequest);
             var defResult = getCredDefResponse.Serialize<LedgerResult<ClaimDefinitionResult>>();
@@ -98,7 +96,6 @@ namespace indy_sdk_spike
             // pretend alice agent sends the transcript request to faber
 
             // faber agent
-
             // faber now issues the claim for the request
             var transcriptCredValues = string.Empty;
             transcriptCredValues += "{";
@@ -114,6 +111,8 @@ namespace indy_sdk_spike
             var createTranscriptCredResult = await AnonCreds.IssuerCreateCredentialAsync(faberEntity.Wallet,
                 transcriptCredOfferJson, transcriptRequest.CredentialRequestJson, transcriptCredValues, null, null);
 
+            // pretend faber sends credentials to alice
+
             // alice agent
 
             // alice store the credential in her wallet
@@ -124,20 +123,16 @@ namespace indy_sdk_spike
                 faberTranscriptCredDef.ObjectJson,
                 null);
 
-
-
             // acme agent
-
             var jobApplicationProofRequestJson = GenerateAcmeProofRequest(faberTranscriptCredDef.Id);
-
             var aliceAcmeOnboarding = await OnboardNewEntity(aliceEntity.Wallet, acmeEntity, false);
-
             var authCryptedJObApplicationProofRequestJson = await Crypto.AuthCryptAsync(acmeEntity.Wallet,
-                aliceAcmeOnboarding.StewardTrusteeDidInfo.VerKey, aliceAcmeOnboarding.TrusteeStewardDidInfo.VerKey, jobApplicationProofRequestJson.ToBytes());
+                aliceAcmeOnboarding.StewardTrusteeDidInfo.VerKey, 
+                aliceAcmeOnboarding.TrusteeStewardDidInfo.VerKey, 
+                jobApplicationProofRequestJson.ToBytes());
 
             // alice agent
             var decryptedResultJobApplicationProofRequestJson = await AuthDecrypt(aliceEntity.Wallet, aliceAcmeOnboarding.TrusteeStewardDidInfo.VerKey, authCryptedJObApplicationProofRequestJson);
-            
 
             // alice now prepare the proof for acme
             var claimForProofJson = await AnonCreds.ProverGetCredentialsForProofReqAsync(aliceEntity.Wallet, decryptedResultJobApplicationProofRequestJson);
@@ -167,7 +162,6 @@ namespace indy_sdk_spike
             requestedCred = requestedCred.Replace("cred_for_attr4", claimForProof.Attrs["attr4_referent"].First().CredInfo.ClaimUUID);
             requestedCred = requestedCred.Replace("cred_for_attr5", claimForProof.Attrs["attr5_referent"].First().CredInfo.ClaimUUID);
             requestedCred = requestedCred.Replace("cred_for_predicate1", claimForProof.Predicates["predicate1_referent"].First().CredInfo.ClaimUUID);
-
 
             var faberTranscriptCredDefJson = "{\"" + faberTranscriptCredDef.Id + "\":" + faberTranscriptCredDef.ObjectJson + "}";
             var transcriptSchemaJson = "{\"" + transcriptSchema.Id + "\":" + transcriptSchema.ObjectJson + "}";
@@ -292,12 +286,10 @@ namespace indy_sdk_spike
         }
 
 
-        private async Task<OnboardingDetail> OnboardNewEntity(Wallet trusteeWallet, DidEntity stewardDidEntity, bool createTrusteeDid = true)
+        private async Task<OnboardingDetail> OnboardNewEntity(Wallet trusteeWallet, DidEntity stewardDidEntity, bool createVerinym = true)
         {
             // a. Connecting the Establishment. 
-
             // Trustee and steward contact in some way. Can be filling the form on a Steward's web site or a phone call
-
             // ## steward side
             // create pair wise identifier for steward to trustee
            
@@ -308,6 +300,7 @@ namespace indy_sdk_spike
                 VerKey = stewardtrusteeDidResult.VerKey
             };
 
+            // save the first pairwise DID to the ledger
             var nymRequest = await Ledger.BuildNymRequestAsync(stewardDidEntity.DidInfo.Did, stewardtrusteeDid.Did, stewardtrusteeDid.VerKey, null, null);
             await Ledger.SignAndSubmitRequestAsync(pool, stewardDidEntity.Wallet, stewardDidEntity.DidInfo.Did, nymRequest);
 
@@ -322,7 +315,6 @@ namespace indy_sdk_spike
 
             // ## trustee side
             // trustee create pair wise identifier 
-
             var trusteeStewardDidResult = await Did.CreateAndStoreMyDidAsync(trusteeWallet, "{}");
             var trusteeStewardDidInfo = new DidInfo()
             {
@@ -353,7 +345,7 @@ namespace indy_sdk_spike
                 throw new Exception("Nonce not matched");
             }
 
-            // create pair wise identifier for trustee to steward
+            // save the second pairwise DID to the ledger
             var trusteeStewardDidNymRequest = await Ledger.BuildNymRequestAsync(stewardDidEntity.DidInfo.Did, decryptedConnectionResponse.Did, decryptedConnectionResponse.VerKey, null, null);
             await Ledger.SignAndSubmitRequestAsync(pool, stewardDidEntity.Wallet, stewardDidEntity.DidInfo.Did, trusteeStewardDidNymRequest);
 
@@ -361,10 +353,8 @@ namespace indy_sdk_spike
             // b. trustee getting Verinym. Steward creating trustee's did on trustee's behalf
 
             // trustee side
-
             var trusteeDidInfo = new DidInfo();
-
-            if (createTrusteeDid)
+            if (createVerinym)
             {
                 var trusteeDid = await Did.CreateAndStoreMyDidAsync(trusteeWallet, "{}");
                 trusteeDidInfo.Did = trusteeDid.Did;
@@ -391,7 +381,6 @@ namespace indy_sdk_spike
                 var decryptedResult = await Crypto.AuthDecryptAsync(stewardDidEntity.Wallet, stewardTrusteeVerKey, authCryptedTrusteeDidInfoJson);
                 var decryptedMessage = decryptedResult.MessageData.Serialize<Message>();
 
-
                 // authenticate by looking up trusteeStewardVerKey on ledger and compare with the one in message
                 var trusteeStewardVerKey = await Did.KeyForDidAsync(pool, stewardDidEntity.Wallet, decryptedMessage.SenderDidInfo.Did);
                 if (decryptedResult.TheirVk != trusteeStewardVerKey)
@@ -405,6 +394,7 @@ namespace indy_sdk_spike
 
                 // At this point, trustee has a DID related to his identity in the Ledger.
             }
+
             var onboardingDetail = new OnboardingDetail
             {
                 StewardTrusteeDidInfo = stewardtrusteeDid,
@@ -443,7 +433,7 @@ namespace indy_sdk_spike
                 Seed = "000000000000000000000000Steward1"
             };
             string stewardDidInfoJSON = stewardDidInfo.ToJson();
-            CreateAndStoreMyDidResult stewardDidResult = await Did.CreateAndStoreMyDidAsync(stewardWallet, stewardDidInfoJSON);
+            CreateAndStoreMyDidResult stewardDidResult = await Did.CreateAndStoreMyDidAsync(stewardWallet, null);
             return new DidEntity
             {
                 DidInfo = new DidInfo
